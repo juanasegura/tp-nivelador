@@ -1,6 +1,9 @@
+import safe_socket
+
 from lottery.bet import Bet
 
 UINT32_SIZE = 4  # bytes de un uint32
+UINT8_SIZE = 1  # bytes de un uint8
 BIRTHDATE_LEN = 10  # tamaño de fecha (YYYY-MM-DD)
 
 TYPE_BET = 0
@@ -10,14 +13,13 @@ TYPE_WINNERS = 3
 
 
 def to_bytes(bet: Bet) -> bytes:
-    buf = []
-    buf += bet.agency_id.to_bytes(UINT32_SIZE, "big")
+    buf = bet.agency_id.to_bytes(UINT32_SIZE, "big")
 
     first = bet.first_name.encode("utf-8")
-    buf += len(first).to_bytes(UINT32_SIZE, "big") + first
+    buf += len(first).to_bytes(UINT8_SIZE, "big") + first
 
     last = bet.last_name.encode("utf-8")
-    buf += len(last).to_bytes(UINT32_SIZE, "big") + last
+    buf += len(last).to_bytes(UINT8_SIZE, "big") + last
 
     buf += bet.document.to_bytes(UINT32_SIZE, "big")
 
@@ -31,13 +33,13 @@ def from_bytes(data: bytes) -> Bet:
     agency_id = int.from_bytes(data[pos: pos + UINT32_SIZE], "big")
     pos += UINT32_SIZE
 
-    first_len = int.from_bytes(data[pos: pos + UINT32_SIZE], "big")
-    pos += UINT32_SIZE
-    first_name = data[pos: pos + first_len].decode("utf-8")
+    first_len = int(data[pos])
+    pos += UINT8_SIZE
+    first_name = data[pos : pos + first_len].decode("utf-8")
     pos += first_len
 
-    last_len = int.from_bytes(data[pos: pos + UINT32_SIZE], "big")
-    pos += UINT32_SIZE
+    last_len = int(data[pos])
+    pos += UINT8_SIZE
     last_name = data[pos : pos + last_len].decode("utf-8")
     pos += last_len
 
@@ -85,4 +87,4 @@ def winners_to_bytes(winners: list[Bet]) -> bytes:
 
 
 def make_packet_winners(winners: list[Bet]) -> bytes:
-    return write_packet(TYPE_WINNERS, winners_to_bytes(winners))
+    return make_packet(TYPE_WINNERS, winners_to_bytes(winners))

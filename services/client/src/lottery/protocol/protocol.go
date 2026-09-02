@@ -7,12 +7,14 @@ import (
 
 const (
 	Uint32Size   = 4  // bytes de un uint32
+	Uint8Size    = 1  // bytes de un uint8
 	BirthdateLen = 10 // tamaño de fecha (YYYY-MM-DD)
 	HeaderSize   = 5  // 1 byte de packet type, 4 de len de payload
 
 	TypeBet        = 0
 	TypeAck        = 1
 	TypeNoMoreBets = 2
+	TypeWinners    = 3
 )
 
 type Bet struct {
@@ -29,10 +31,10 @@ func ToBytes(b Bet) []byte {
 
 	buf = binary.BigEndian.AppendUint32(buf, b.AgencyId)
 
-	buf = binary.BigEndian.AppendUint32(buf, uint32(len(b.FirstName)))
+	buf = append(buf, byte(len(b.FirstName)))
 	buf = append(buf, b.FirstName...)
 
-	buf = binary.BigEndian.AppendUint32(buf, uint32(len(b.LastName)))
+	buf = append(buf, byte(len(b.LastName)))
 	buf = append(buf, b.LastName...)
 
 	buf = binary.BigEndian.AppendUint32(buf, b.Document)
@@ -91,11 +93,11 @@ func FromBytes(b []byte) (Bet, error) {
 }
 
 func readString(b []byte, pos int) (string, int, error) {
-	if pos+4 > len(b) {
+	if pos+Uint8Size > len(b) {
 		return "", 0, fmt.Errorf("payload incompleto")
 	}
-	strLen := int(binary.BigEndian.Uint32(b[pos : pos+4]))
-	pos += 4
+	strLen := int(b[pos])
+	pos += Uint8Size
 	if pos+strLen > len(b) {
 		return "", 0, fmt.Errorf("payload incompleto")
 	}

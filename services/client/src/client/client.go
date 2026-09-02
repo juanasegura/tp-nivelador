@@ -1,7 +1,10 @@
 package client
 
 import (
+	"bufio"
+	"fmt"
 	"net"
+	"os"
 	"time"
 
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/logger"
@@ -11,14 +14,12 @@ import (
 const CONNECTION_ATTEMPTS_MAX = 3
 const CONNECTION_ATTEMPS_DELAY_MS = 200
 
-const ECHO_CLIENT_BUFFER_SIZE = 512
-const ECHO_CLIENT_MESSAGE_AMOUNT = 3
-const ECHO_CLIENT_MESSAGE_DELAY_MS = 1000
-
 type ClientConfig struct {
 	ServerHost string
 	ServerPort string
 	AgencyId   string
+	InputFile  string
+	OutputFile string
 }
 
 type Client struct {
@@ -59,32 +60,57 @@ func connectToServer(host, port string) (net.Conn, error) {
 }
 
 func (client *Client) Run() error {
-	const mainAction = "test-echo-server"
-	defer client.conn.Close()
-
-	for messageId := range ECHO_CLIENT_MESSAGE_AMOUNT {
-		messageArgs := []any{"agency-id", client.config.AgencyId, "message-id", messageId}
-		logger.Info(mainAction, logger.InProgress, messageArgs...)
-
-		clientMessage := client.config.AgencyId
-
-		if err := safe_socket.SendAll(client.conn, []byte(clientMessage)); err != nil {
-			logger.Error("send-message", logger.Fail, messageArgs...)
-			return err
+	const mainAction = "send-bets"
+	defer func() {
+		if err := client.conn.Close(); err != nil {
+			logger.Error("close-connection", logger.Fail, "err", err)
 		}
+	}()
 
-		responseBuffer, err := safe_socket.RecvAll(client.conn, ECHO_CLIENT_BUFFER_SIZE)
+	input_file, err := os.Open(client.config.InputFile)
+	if err != nil {
+		return fmt.Errorf("error al abrir el archivo %q: %w", client.config.InputFile, err)
+	}
+	defer func() {
+		if err := input_file.Close(); err != nil {
+			logger.Error("close-input", logger.Fail, "err", err)
+		}
+	}()
+
+	outputFile, err := os.Create(client.config.OutputFile)
+	if err != nil {
+		return fmt.Errorf("error al crear archivo %q: %w", client.config.OutputFile, err)
+	}
+	defer func() {
+		if err := outputFile.Close(); err != nil {
+			logger.Error("close-output", logger.Fail, "err", err)
+		}
+	}()
+	writer := bufio.NewWriter(outputFile)
+	defer func() {
+		if err := writer.Flush(); err != nil {
+			logger.Error("flush-output", logger.Fail, "err", err)
+		}
+	}()
+
+	scanner := bufio.NewScanner(input_file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		bytes := []byte(line)
+		err := safe_socket.SendAll(client.conn, bytes)
 		if err != nil {
-			logger.Error("recv-response", logger.Fail, messageArgs...)
-			return err
+			return fmt.Errorf("error al enviar por socket %w", err)
 		}
-
-		if string(responseBuffer) != clientMessage {
-			logger.Error("check-response", logger.Fail, messageArgs...)
-			return err
+		response, err := safe_socket.RecvAll(client.conn, 1024)
+		if err != nil {
+			return fmt.Errorf("error al recibir por socket %w", err)
 		}
-
-		time.Sleep(ECHO_CLIENT_MESSAGE_DELAY_MS * time.Millisecond)
+		if _, err := writer.Write(response); err != nil {
+			return fmt.Errorf("error al escribir en archivo: %w", err)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("error al leer archivo %w", err)
 	}
 	logger.Info(mainAction, logger.Success, "agency-id", client.config.AgencyId)
 

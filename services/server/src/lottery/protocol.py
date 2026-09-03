@@ -5,14 +5,34 @@ from lottery.bet import Bet
 UINT32_SIZE = 4  # bytes de un uint32
 UINT8_SIZE = 1  # bytes de un uint8
 BIRTHDATE_LEN = 10  # tamaño de fecha (YYYY-MM-DD)
+HEADER_SIZE = 5 # 1 byte de type + 4 de len de payload
 
 TYPE_BET = 0
 TYPE_ACK = 1
 TYPE_NO_MORE_BETS = 2
 TYPE_WINNERS = 3
 
+class Packet:
+    def __init__(self, msg_type: int, payload: bytes):
+        self._type = msg_type
+        self._payload = payload
 
-def to_bytes(bet: Bet) -> bytes:
+    def is_bet(self) -> bool:
+        return self._type == TYPE_BET
+
+    def is_ack(self) -> bool:
+        return self._type == TYPE_ACK
+
+    def is_no_more_bets(self) -> bool:
+        return self._type == TYPE_NO_MORE_BETS
+
+    def is_winners(self) -> bool:
+        return self._type == TYPE_WINNERS
+
+    def payload(self) -> bytes:
+        return self._payload
+
+def bet_to_bytes(bet: Bet) -> bytes:
     buf = bet.agency_id.to_bytes(UINT32_SIZE, "big")
 
     first = bet.first_name.encode("utf-8")
@@ -28,7 +48,7 @@ def to_bytes(bet: Bet) -> bytes:
     buf += bet.number.to_bytes(UINT32_SIZE, "big")
     return buf
 
-def from_bytes(data: bytes) -> Bet:
+def bet_from_bytes(data: bytes) -> Bet:
     pos = 0
     agency_id = int.from_bytes(data[pos: pos + UINT32_SIZE], "big")
     pos += UINT32_SIZE
@@ -62,29 +82,25 @@ def make_packet(msg_type: int, payload: bytes = b"") -> bytes:
 def make_packet_no_more_bets() -> bytes:
     return make_packet(TYPE_NO_MORE_BETS)
 
-
 def make_packet_ack() -> bytes:
     return make_packet(TYPE_ACK)
 
-
 def make_packet_bet(bet: Bet) -> bytes:
-    return make_packet(TYPE_BET, to_bytes(bet))
+    return make_packet(TYPE_BET, bet_to_bytes(bet))
 
-def read_message(sock):
+def read_message(sock) -> Packet:
     header = safe_socket.recv_all(sock, HEADER_SIZE)
     msg_type = header[0]
     length = int.from_bytes(header[1:HEADER_SIZE], "big")
     payload = safe_socket.recv_all(sock, length) if length else b""
-    return msg_type, payload
-
+    return Packet(msg_type, payload)
 
 def winners_to_bytes(winners: list[Bet]) -> bytes:
     buf = len(winners).to_bytes(UINT32_SIZE, "big")
     for w in winners:
-        payload = to_bytes(w)
+        payload = bet_to_bytes(w)
         buf += len(payload).to_bytes(UINT32_SIZE, "big") + payload
     return buf
-
 
 def make_packet_winners(winners: list[Bet]) -> bytes:
     return make_packet(TYPE_WINNERS, winners_to_bytes(winners))

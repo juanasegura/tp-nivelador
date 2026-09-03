@@ -3,6 +3,9 @@ package protocol
 import (
 	"encoding/binary"
 	"fmt"
+	"net"
+
+	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/safe_socket"
 )
 
 const (
@@ -106,7 +109,18 @@ func readString(b []byte, pos int) (string, int, error) {
 	return str, pos, nil
 }
 
-func MakePacket(pktType byte, payload []byte) []byte {
+type Packet struct {
+	typ     byte
+	payload []byte
+}
+
+func (p *Packet) IsBet() bool        { return p.typ == TypeBet }
+func (p *Packet) IsAck() bool        { return p.typ == TypeAck }
+func (p *Packet) IsNoMoreBets() bool { return p.typ == TypeNoMoreBets }
+func (p *Packet) IsWinners() bool    { return p.typ == TypeWinners }
+func (p *Packet) Payload() []byte    { return p.payload }
+
+func makePacket(pktType byte, payload []byte) []byte {
 	packet := make([]byte, HeaderSize, HeaderSize+len(payload))
 	packet[0] = pktType
 	binary.BigEndian.PutUint32(packet[1:5], uint32(len(payload)))
@@ -114,13 +128,53 @@ func MakePacket(pktType byte, payload []byte) []byte {
 }
 
 func CreateAck() []byte {
-	return MakePacket(TypeAck, nil)
+	return makePacket(TypeAck, nil)
 }
 
 func CreateNoMoreBets() []byte {
-	return MakePacket(TypeNoMoreBets, nil)
+	return makePacket(TypeNoMoreBets, nil)
 }
 
 func CreateBet(bet Bet) []byte {
-	return MakePacket(TypeBet, ToBytes(bet))
+	return makePacket(TypeBet, ToBytes(bet))
+}
+
+func ReadMessage(conn net.Conn) (*Packet, error) {
+	header, err := safe_socket.RecvAll(conn, HeaderSize)
+	if err != nil {
+		return nil, err
+	}
+	msgType := header[0]
+	length := binary.BigEndian.Uint32(header[1:5])
+	payload, err := safe_socket.RecvAll(conn, int(length))
+	if err != nil {
+		return nil, err
+	}
+	return &Packet{typ: msgType, payload: payload}, nil
+}
+
+func FromWinners(payload []byte) ([]Bet, error) {
+	if len(payload) < Uint32Size {
+		return nil, fmt.Errorf("payload de winners incompleto")
+	}
+	count := int(binary.BigEndian.Uint32(payload[:Uint32Size]))
+	pos := Uint32Size
+	winners := make([]Bet, 0, count)
+	for range count {
+		if pos+Uint32Size > len(payload) {
+			return nil, fmt.Errorf("winners incompleto")
+		}
+		betLen := int(binary.BigEndian.Uint32(payload[pos : pos+Uint32Size]))
+		pos += Uint32Size
+		if pos+betLen > len(payload) {
+			return nil, fmt.Errorf("winners incompleto")
+		}
+		bet, err := FromBytes(payload[pos : pos+betLen])
+		if err != nil {
+			return nil, err
+		}
+		pos += betLen
+		winners = append(winners, bet)
+	}
+	return winners, nil
 }

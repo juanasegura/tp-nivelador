@@ -5,14 +5,29 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/logger"
+	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/lottery/protocol"
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/safe_socket"
 )
 
 const CONNECTION_ATTEMPTS_MAX = 3
 const CONNECTION_ATTEMPS_DELAY_MS = 200
+
+const (
+	// Campos del CSV de entrada (first_name,last_name,document,birthdate,number)
+	FieldFirstName = 0
+	FieldLastName  = 1
+	FieldDocument  = 2
+	FieldBirthdate = 3
+	FieldNumber    = 4
+	ExpectedFields = 5
+	// Base decimal de los números en el CSV
+	Base10 = 10
+)
 
 type ClientConfig struct {
 	ServerHost string
@@ -96,23 +111,87 @@ func (client *Client) Run() error {
 	scanner := bufio.NewScanner(input_file)
 	for scanner.Scan() {
 		line := scanner.Text()
-		bytes := []byte(line)
-		err := safe_socket.SendAll(client.conn, bytes)
-		if err != nil {
-			return fmt.Errorf("error al enviar por socket %w", err)
+		if line == "" {
+			continue
 		}
-		response, err := safe_socket.RecvAll(client.conn, 1024)
+		bet, err := parseLine(line, client.config.AgencyId)
 		if err != nil {
-			return fmt.Errorf("error al recibir por socket %w", err)
+			return fmt.Errorf("error al parsear línea %q: %w", line, err)
 		}
-		if _, err := writer.Write(response); err != nil {
-			return fmt.Errorf("error al escribir en archivo: %w", err)
+		if err := client.sendBet(bet); err != nil {
+			return err
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("error al leer archivo %w", err)
 	}
-	logger.Info(mainAction, logger.Success, "agency-id", client.config.AgencyId)
 
+	if err := safe_socket.SendAll(client.conn, protocol.CreateNoMoreBets()); err != nil {
+		return fmt.Errorf("error al enviar no-more-bets por socket %w", err)
+	}
+
+	packet, err := protocol.ReadMessage(client.conn)
+	if err != nil {
+		return fmt.Errorf("error al recibir winners por socket %w", err)
+	}
+	if !packet.IsWinners() {
+		return fmt.Errorf("se esperaba un paquete de winners, se recibió otro tipo")
+	}
+	winners, err := protocol.FromWinners(packet.Payload())
+	if err != nil {
+		return fmt.Errorf("error al deserializar winners %w", err)
+	}
+
+	for _, w := range winners {
+		betLine := fmt.Sprintf("%s,%s,%d,%s,%d\n",
+			w.FirstName, w.LastName, w.Document, w.Birthdate, w.Number)
+		if _, err := writer.WriteString(betLine); err != nil {
+			return fmt.Errorf("error al escribir en archivo: %w", err)
+		}
+	}
+
+	logger.Info(mainAction, logger.Success, "agency-id", client.config.AgencyId, "winners", len(winners))
+
+	return nil
+}
+
+func parseLine(line, agencyId string) (protocol.Bet, error) {
+	fields := strings.Split(line, ",")
+	if len(fields) != ExpectedFields {
+		return protocol.Bet{}, fmt.Errorf("se esperaban %d campos, hay %d", ExpectedFields, len(fields))
+	}
+	document, err := strconv.ParseUint(fields[FieldDocument], Base10, 32)
+	if err != nil {
+		return protocol.Bet{}, err
+	}
+	number, err := strconv.ParseUint(fields[FieldNumber], Base10, 32)
+	if err != nil {
+		return protocol.Bet{}, err
+	}
+	agency, err := strconv.ParseUint(agencyId, Base10, 32)
+	if err != nil {
+		return protocol.Bet{}, err
+	}
+	return protocol.Bet{
+		AgencyId:  uint32(agency),
+		FirstName: fields[FieldFirstName],
+		LastName:  fields[FieldLastName],
+		Document:  uint32(document),
+		Birthdate: fields[FieldBirthdate],
+		Number:    uint32(number),
+	}, nil
+}
+
+func (client *Client) sendBet(bet protocol.Bet) error {
+	if err := safe_socket.SendAll(client.conn, protocol.CreateBet(bet)); err != nil {
+		return fmt.Errorf("error al enviar bet por socket %w", err)
+	}
+	packet, err := protocol.ReadMessage(client.conn)
+	if err != nil {
+		return fmt.Errorf("error al recibir ack por socket %w", err)
+	}
+	if !packet.IsAck() {
+		return fmt.Errorf("se esperaba un ack, se recibió otro tipo")
+	}
 	return nil
 }

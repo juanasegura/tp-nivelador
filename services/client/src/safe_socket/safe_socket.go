@@ -14,7 +14,6 @@ func SendAll(socket io.Writer, bytes []byte) error {
 		total += n
 	}
 	return nil
-
 }
 
 func RecvAll(socket io.Reader, size int) ([]byte, error) {

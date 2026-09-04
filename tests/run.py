@@ -30,7 +30,7 @@ MESSAGE_PADDING = 32
 def main():
     for test_case in TEST_CASES:
         print(
-            f"Testing {test_case.title.ljust(MESSAGE_PADDING, ".")}", end="", flush=True
+            f"Testing {test_case.title.ljust(MESSAGE_PADDING, '.')}", end="", flush=True
         )
 
         try:

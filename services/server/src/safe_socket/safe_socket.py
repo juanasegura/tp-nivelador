@@ -1,5 +1,6 @@
 import socket
 
+
 def recv_all(sock: socket.socket, size: int) -> bytes:
     buf = bytearray()
     while len(buf) < size:
@@ -8,6 +9,7 @@ def recv_all(sock: socket.socket, size: int) -> bytes:
             raise ValueError("conexion cerrada")
         buf += chunk
     return bytes(buf)
+
 
 def send_all(sock: socket.socket, data: bytes):
     total = 0

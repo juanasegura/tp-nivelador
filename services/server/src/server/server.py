@@ -1,8 +1,9 @@
 import socket
 import logger
 import safe_socket
-import protocol
+from lottery import protocol
 from lottery.lottery import Lottery
+
 
 class Server:
     def __init__(self, server_host: str, server_port: int, storage_path: str):
@@ -12,30 +13,29 @@ class Server:
 
     def _handle_client(self, client_socket):
         action = "handle-client"
+        client_agency = None
         try:
             logger.info(action, logger.LogResult.in_progress)
             while True:
                 packet = protocol.read_message(client_socket)
-                if packet.is_bet():
-                    bet = protocol.bet_from_bytes(packet.payload())
-                    self.lottery.store_bets([bet])
-                    safe_socket.send_all(
-                        client_socket,
-                        protocol.make_packet_ack(),
-                    )
+                if packet.is_bets():
+                    bets = protocol.bets_from_bytes(packet.payload())
+                    self.lottery.store_bets(bets)
+                    client_agency = bets[0].agency_id
+                    safe_socket.send_all(client_socket, protocol.make_packet_ack())
                 elif packet.is_no_more_bets():
                     winners = [
-                        b for b in self.lottery.load_bets() if self.lottery.has_won(b)
+                        b
+                        for b in self.lottery.load_bets()
+                        if self.lottery.has_won(b) and b.agency_id == client_agency
                     ]
                     safe_socket.send_all(
                         client_socket,
-                        protocol.make_packet_winners(winners),
+                        protocol.make_packet_bets(winners, client_agency),
                     )
                     break
         except Exception as e:
-            logger.error(
-                action, logger.LogResult.fail
-            )
+            logger.error(action, logger.LogResult.fail)
             raise e
         finally:
             client_socket.close()

@@ -12,12 +12,11 @@ const (
 	Uint32Size   = 4  // bytes de un uint32
 	Uint8Size    = 1  // bytes de un uint8
 	BirthdateLen = 10 // tamaño de fecha (YYYY-MM-DD)
-	HeaderSize   = 5  // 1 byte de packet type, 4 de len de payload
+	HeaderSize   = 5  // 1 byte de tipo + 4 de len de payload
 
-	TypeBet        = 0
+	TypeBets       = 0
 	TypeAck        = 1
 	TypeNoMoreBets = 2
-	TypeWinners    = 3
 )
 
 type Bet struct {
@@ -29,61 +28,91 @@ type Bet struct {
 	Number    uint32
 }
 
-func ToBytes(b Bet) []byte {
-	buf := make([]byte, 0, 64)
+type Packet struct {
+	typ     byte
+	payload []byte
+}
 
-	buf = binary.BigEndian.AppendUint32(buf, b.AgencyId)
+func (p *Packet) IsBets() bool       { return p.typ == TypeBets }
+func (p *Packet) IsAck() bool        { return p.typ == TypeAck }
+func (p *Packet) IsNoMoreBets() bool { return p.typ == TypeNoMoreBets }
+func (p *Packet) Payload() []byte    { return p.payload }
 
-	buf = append(buf, byte(len(b.FirstName)))
-	buf = append(buf, b.FirstName...)
+func BetsToBytes(bets []Bet, agencyId uint32) []byte {
+	buf := make([]byte, 0, Uint32Size*2)
+	buf = binary.BigEndian.AppendUint32(buf, uint32(len(bets)))
+	buf = binary.BigEndian.AppendUint32(buf, agencyId)
+	for _, bet := range bets {
+		buf = append(buf, BetToBytes(bet)...)
+	}
+	return buf
+}
 
-	buf = append(buf, byte(len(b.LastName)))
-	buf = append(buf, b.LastName...)
+func BetToBytes(bet Bet) []byte {
+	buf := make([]byte, 0, 60)
 
-	buf = binary.BigEndian.AppendUint32(buf, b.Document)
+	buf = append(buf, byte(len(bet.FirstName)))
+	buf = append(buf, bet.FirstName...)
 
-	buf = append(buf, b.Birthdate...)
+	buf = append(buf, byte(len(bet.LastName)))
+	buf = append(buf, bet.LastName...)
 
-	buf = binary.BigEndian.AppendUint32(buf, b.Number)
+	buf = binary.BigEndian.AppendUint32(buf, bet.Document)
+
+	buf = append(buf, bet.Birthdate...)
+
+	buf = binary.BigEndian.AppendUint32(buf, bet.Number)
 
 	return buf
 }
 
-func FromBytes(b []byte) (Bet, error) {
-	if len(b) < Uint32Size {
-		return Bet{}, fmt.Errorf("payload demasiado corto")
+func BetsFromBytes(payload []byte) ([]Bet, error) {
+	if len(payload) < Uint32Size*2 {
+		return nil, fmt.Errorf("payload de bets incompleto")
 	}
+	count := int(binary.BigEndian.Uint32(payload[:Uint32Size]))
+	agencyId := binary.BigEndian.Uint32(payload[Uint32Size : Uint32Size*2])
+	pos := Uint32Size * 2
+	bets := make([]Bet, 0, count)
+	for range count {
+		bet, newPos, err := BetFromBytes(payload, pos, agencyId)
+		if err != nil {
+			return nil, err
+		}
+		pos = newPos
+		bets = append(bets, bet)
+	}
+	return bets, nil
+}
 
-	pos := 0
-	agencyId := binary.BigEndian.Uint32(b[pos : pos+4])
-	pos += Uint32Size
-
+func BetFromBytes(b []byte, pos int, agencyId uint32) (Bet, int, error) {
 	firstName, pos, err := readString(b, pos)
 	if err != nil {
-		return Bet{}, err
+		return Bet{}, 0, err
 	}
 
 	lastName, pos, err := readString(b, pos)
 	if err != nil {
-		return Bet{}, err
+		return Bet{}, 0, err
 	}
 
 	if pos+Uint32Size > len(b) {
-		return Bet{}, fmt.Errorf("payload incompleto")
+		return Bet{}, 0, fmt.Errorf("payload incompleto")
 	}
-	document := binary.BigEndian.Uint32(b[pos : pos+4])
+	document := binary.BigEndian.Uint32(b[pos : pos+Uint32Size])
 	pos += Uint32Size
 
 	if pos+BirthdateLen > len(b) {
-		return Bet{}, fmt.Errorf("payload incompleto")
+		return Bet{}, 0, fmt.Errorf("payload incompleto")
 	}
-	birthday := string(b[pos : pos+10])
-	pos += 10
+	birthday := string(b[pos : pos+BirthdateLen])
+	pos += BirthdateLen
 
 	if pos+Uint32Size > len(b) {
-		return Bet{}, fmt.Errorf("payload incompleto")
+		return Bet{}, 0, fmt.Errorf("payload incompleto")
 	}
 	number := binary.BigEndian.Uint32(b[pos : pos+Uint32Size])
+	pos += Uint32Size
 
 	return Bet{
 		AgencyId:  agencyId,
@@ -92,7 +121,7 @@ func FromBytes(b []byte) (Bet, error) {
 		Document:  document,
 		Birthdate: birthday,
 		Number:    number,
-	}, nil
+	}, pos, nil
 }
 
 func readString(b []byte, pos int) (string, int, error) {
@@ -109,17 +138,6 @@ func readString(b []byte, pos int) (string, int, error) {
 	return str, pos, nil
 }
 
-type Packet struct {
-	typ     byte
-	payload []byte
-}
-
-func (p *Packet) IsBet() bool        { return p.typ == TypeBet }
-func (p *Packet) IsAck() bool        { return p.typ == TypeAck }
-func (p *Packet) IsNoMoreBets() bool { return p.typ == TypeNoMoreBets }
-func (p *Packet) IsWinners() bool    { return p.typ == TypeWinners }
-func (p *Packet) Payload() []byte    { return p.payload }
-
 func makePacket(pktType byte, payload []byte) []byte {
 	packet := make([]byte, HeaderSize, HeaderSize+len(payload))
 	packet[0] = pktType
@@ -127,16 +145,16 @@ func makePacket(pktType byte, payload []byte) []byte {
 	return append(packet, payload...)
 }
 
-func CreateAck() []byte {
-	return makePacket(TypeAck, nil)
-}
-
-func CreateNoMoreBets() []byte {
+func MakePacketNoMoreBets() []byte {
 	return makePacket(TypeNoMoreBets, nil)
 }
 
-func CreateBet(bet Bet) []byte {
-	return makePacket(TypeBet, ToBytes(bet))
+func MakePacketAck() []byte {
+	return makePacket(TypeAck, nil)
+}
+
+func MakePacketBets(bets []Bet) []byte {
+	return makePacket(TypeBets, BetsToBytes(bets, bets[0].AgencyId))
 }
 
 func ReadMessage(conn net.Conn) (*Packet, error) {
@@ -151,30 +169,4 @@ func ReadMessage(conn net.Conn) (*Packet, error) {
 		return nil, err
 	}
 	return &Packet{typ: msgType, payload: payload}, nil
-}
-
-func FromWinners(payload []byte) ([]Bet, error) {
-	if len(payload) < Uint32Size {
-		return nil, fmt.Errorf("payload de winners incompleto")
-	}
-	count := int(binary.BigEndian.Uint32(payload[:Uint32Size]))
-	pos := Uint32Size
-	winners := make([]Bet, 0, count)
-	for range count {
-		if pos+Uint32Size > len(payload) {
-			return nil, fmt.Errorf("winners incompleto")
-		}
-		betLen := int(binary.BigEndian.Uint32(payload[pos : pos+Uint32Size]))
-		pos += Uint32Size
-		if pos+betLen > len(payload) {
-			return nil, fmt.Errorf("winners incompleto")
-		}
-		bet, err := FromBytes(payload[pos : pos+betLen])
-		if err != nil {
-			return nil, err
-		}
-		pos += betLen
-		winners = append(winners, bet)
-	}
-	return winners, nil
 }

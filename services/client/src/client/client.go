@@ -25,7 +25,8 @@ const (
 	FieldBirthdate = 3
 	FieldNumber    = 4
 	ExpectedFields = 5
-	// Base decimal de los números en el CSV
+
+	// Auxiliares numéricos
 	Base10 = 10
 )
 
@@ -35,6 +36,7 @@ type ClientConfig struct {
 	AgencyId   string
 	InputFile  string
 	OutputFile string
+	BatchSize  int
 }
 
 type Client struct {
@@ -82,12 +84,12 @@ func (client *Client) Run() error {
 		}
 	}()
 
-	input_file, err := os.Open(client.config.InputFile)
+	inputFile, err := os.Open(client.config.InputFile)
 	if err != nil {
 		return fmt.Errorf("error al abrir el archivo %q: %w", client.config.InputFile, err)
 	}
 	defer func() {
-		if err := input_file.Close(); err != nil {
+		if err := inputFile.Close(); err != nil {
 			logger.Error("close-input", logger.Fail, "err", err)
 		}
 	}()
@@ -108,7 +110,8 @@ func (client *Client) Run() error {
 		}
 	}()
 
-	scanner := bufio.NewScanner(input_file)
+	scanner := bufio.NewScanner(inputFile)
+	var batch []protocol.Bet
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
@@ -118,15 +121,24 @@ func (client *Client) Run() error {
 		if err != nil {
 			return fmt.Errorf("error al parsear línea %q: %w", line, err)
 		}
-		if err := client.sendBet(bet); err != nil {
-			return err
+		batch = append(batch, bet)
+		if len(batch) >= client.config.BatchSize {
+			if err := client.sendBets(batch); err != nil {
+				return err
+			}
+			batch = batch[:0]
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("error al leer archivo %w", err)
 	}
+	if len(batch) > 0 {
+		if err := client.sendBets(batch); err != nil {
+			return err
+		}
+	}
 
-	if err := safe_socket.SendAll(client.conn, protocol.CreateNoMoreBets()); err != nil {
+	if err := safe_socket.SendAll(client.conn, protocol.MakePacketNoMoreBets()); err != nil {
 		return fmt.Errorf("error al enviar no-more-bets por socket %w", err)
 	}
 
@@ -134,10 +146,10 @@ func (client *Client) Run() error {
 	if err != nil {
 		return fmt.Errorf("error al recibir winners por socket %w", err)
 	}
-	if !packet.IsWinners() {
+	if !packet.IsBets() {
 		return fmt.Errorf("se esperaba un paquete de winners, se recibió otro tipo")
 	}
-	winners, err := protocol.FromWinners(packet.Payload())
+	winners, err := protocol.BetsFromBytes(packet.Payload())
 	if err != nil {
 		return fmt.Errorf("error al deserializar winners %w", err)
 	}
@@ -182,9 +194,9 @@ func parseLine(line, agencyId string) (protocol.Bet, error) {
 	}, nil
 }
 
-func (client *Client) sendBet(bet protocol.Bet) error {
-	if err := safe_socket.SendAll(client.conn, protocol.CreateBet(bet)); err != nil {
-		return fmt.Errorf("error al enviar bet por socket %w", err)
+func (client *Client) sendBets(bets []protocol.Bet) error {
+	if err := safe_socket.SendAll(client.conn, protocol.MakePacketBets(bets)); err != nil {
+		return fmt.Errorf("error al enviar bets por socket %w", err)
 	}
 	packet, err := protocol.ReadMessage(client.conn)
 	if err != nil {

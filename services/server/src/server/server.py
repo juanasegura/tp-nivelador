@@ -33,6 +33,9 @@ class Server:
                         client_socket,
                         protocol.make_packet_bets(winners, client_agency),
                     )
+                    ack = protocol.read_message(client_socket)
+                    if not ack.is_ack():
+                        raise ValueError("se esperaba un ack del cliente")
                     break
         except Exception as e:
             logger.error(action, logger.LogResult.fail)

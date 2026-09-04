@@ -162,6 +162,10 @@ func (client *Client) Run() error {
 		}
 	}
 
+	if err := safe_socket.SendAll(client.conn, protocol.MakePacketAck()); err != nil {
+		return fmt.Errorf("error al enviar ack de winners por socket %w", err)
+	}
+
 	logger.Info(mainAction, logger.Success, "agency-id", client.config.AgencyId, "winners", len(winners))
 
 	return nil

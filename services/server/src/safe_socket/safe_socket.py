@@ -15,6 +15,4 @@ def send_all(sock: socket.socket, data: bytes):
     total = 0
     while total < len(data):
         sent = sock.send(data[total:])
-        if sent == 0:
-            raise ValueError("error al enviar")
         total += sent

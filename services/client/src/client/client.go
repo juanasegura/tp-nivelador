@@ -76,6 +76,10 @@ func connectToServer(host, port string) (net.Conn, error) {
 	return conn, err
 }
 
+func (client *Client) Close() error {
+	return client.conn.Close()
+}
+
 func (client *Client) Run() error {
 	const mainAction = "send-bets"
 	defer func() {

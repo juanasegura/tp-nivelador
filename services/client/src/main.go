@@ -3,7 +3,9 @@ package main
 import (
 	"errors"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/client"
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/logger"
@@ -51,6 +53,9 @@ func loadConfig() (client.ClientConfig, error) {
 }
 
 func run() int {
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM)
+
 	config, err := loadConfig()
 	if err != nil {
 		logger.Error("load-config", logger.Fail, "err", err)
@@ -63,9 +68,16 @@ func run() int {
 		return 1
 	}
 
+	go func() {
+		<-stop
+		err := newClient.Close()
+		if err != nil {
+			return
+		}
+	}()
+
 	if err := newClient.Run(); err != nil {
 		logger.Error("client-run", logger.Fail, "err", err)
-		return 1
 	}
 	return 0
 }

@@ -1,9 +1,9 @@
 import multiprocessing
 import socket
-
 import client_handler
 import logger
 import quorum
+from lottery.lottery import Lottery
 
 
 class Server:
@@ -12,6 +12,8 @@ class Server:
         self.server_port = server_port
         self.storage_path = storage_path
         self.agency_quorum_min = agency_quorum_min
+        self.lottery = Lottery(storage_path)
+
 
     def run(self):
         action = "accept-connection"
@@ -46,13 +48,13 @@ class Server:
                 proc.start()
                 client_socket.close()
                 handlers.append(proc)
-                handlers = self._reap_finished(handlers)
+                handlers = _join_procs(handlers)
 
-    def _reap_finished(self, handlers):
-        alive = []
-        for proc in handlers:
-            if proc.is_alive():
-                alive.append(proc)
-            else:
-                proc.join()
-        return alive
+def _join_procs(handlers):
+    alive = []
+    for proc in handlers:
+        if proc.is_alive():
+            alive.append(proc)
+        else:
+            proc.join()
+    return alive

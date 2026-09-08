@@ -1,10 +1,11 @@
 import multiprocessing
+import signal
 import socket
+
 import client_handler
 import logger
 import quorum
 from lottery.lottery import Lottery
-
 
 class Server:
     def __init__(self, server_host: str, server_port: int, storage_path: str, agency_quorum_min: int):
@@ -13,11 +14,15 @@ class Server:
         self.storage_path = storage_path
         self.agency_quorum_min = agency_quorum_min
         self.lottery = Lottery(storage_path)
-
+        self.server_socket = None
+        self._terminating = False
 
     def run(self):
         action = "accept-connection"
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
+            self.server_socket = server_socket
+            signal.signal(signal.SIGTERM, self._shutdown)
+
             server_socket.bind((self.server_host, self.server_port))
             server_socket.listen()
 
@@ -31,11 +36,13 @@ class Server:
             quorum_proc.start()
 
             handlers = []
-            while True:
+            while not self._terminating:
                 try:
                     logger.info(action, logger.LogResult.in_progress)
                     client_socket, _ = server_socket.accept()
                 except Exception as e:
+                    if self._terminating:
+                        break
                     logger.error(action, logger.LogResult.fail)
                     raise e
                 logger.info(action, logger.LogResult.success)
@@ -48,13 +55,32 @@ class Server:
                 proc.start()
                 client_socket.close()
                 handlers.append(proc)
-                handlers = _join_procs(handlers)
+                handlers = self._check_live_handlers(handlers)
 
-def _join_procs(handlers):
-    alive = []
-    for proc in handlers:
-        if proc.is_alive():
-            alive.append(proc)
-        else:
-            proc.join()
-    return alive
+            for _ in handlers:
+                ready_q.put(quorum.DIE_TOKEN)
+            requests_q.put(quorum.DIE_TOKEN)
+
+            for proc in handlers:
+                proc.terminate()
+
+            for proc in handlers:
+                proc.join()
+            quorum_proc.join()
+
+            requests_q.close()
+            ready_q.close()
+
+    def _check_live_handlers(self, handlers):
+        alive = []
+        for proc in handlers:
+            if proc.is_alive():
+                alive.append(proc)
+            else:
+                proc.join()
+        return alive
+
+    def _shutdown(self, signum, frame):
+        self._terminating = True
+        if self.server_socket is not None:
+            self.server_socket.close()

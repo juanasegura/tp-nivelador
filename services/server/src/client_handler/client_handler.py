@@ -1,11 +1,11 @@
 import fcntl
+import signal
 import socket
-
 import logger
 import safe_socket
 from lottery import protocol
 from lottery.lottery import Lottery
-
+from quorum import DIE_TOKEN
 
 def handle_client(
     client_socket: socket.socket,
@@ -16,6 +16,15 @@ def handle_client(
     action = "handle-client"
     lottery = Lottery(storage_path)
     client_agency = None
+
+    # defino como closure el manejo de la señal de fin
+    def _terminate_handler(signum, frame):
+        client_socket.close()
+        requests_q.close()
+        ready_q.close()
+
+    signal.signal(signal.SIGTERM, _terminate_handler)
+
     try:
         logger.info(action, logger.LogResult.in_progress)
         while True:
@@ -27,7 +36,9 @@ def handle_client(
                 safe_socket.send_all(client_socket, protocol.make_packet_ack())
             elif packet.is_no_more_bets():
                 requests_q.put(client_agency)
-                ready_q.get()
+                token = ready_q.get()
+                if token == DIE_TOKEN:
+                    break
                 winners = _load_bets_with_lock(storage_path, lottery, client_agency)
                 safe_socket.send_all(
                     client_socket,
@@ -42,6 +53,8 @@ def handle_client(
         raise e
     finally:
         client_socket.close()
+        requests_q.close()
+        ready_q.close()
 
 
 def _store_bets_with_lock(storage_path: str, bets) -> None:

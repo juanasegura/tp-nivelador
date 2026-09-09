@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/logger"
-	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/lottery/protocol"
+	protocol2 "github.com/7574-sistemas-distribuidos/tp-nivelador/src/protocol"
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/safe_socket"
 )
 
@@ -88,6 +88,25 @@ func (client *Client) Run() error {
 		}
 	}()
 
+	if err := client.loadAndSendBets(); err != nil {
+		return err
+	}
+
+	winners, err := client.fetchWinners()
+	if err != nil {
+		return err
+	}
+
+	if err := client.storeWinners(winners); err != nil {
+		return err
+	}
+
+	logger.Info(mainAction, logger.Success, "agency-id", client.config.AgencyId, "winners", len(winners))
+
+	return nil
+}
+
+func (client *Client) loadAndSendBets() error {
 	inputFile, err := os.Open(client.config.InputFile)
 	if err != nil {
 		return fmt.Errorf("error opening file %q: %w", client.config.InputFile, err)
@@ -98,24 +117,8 @@ func (client *Client) Run() error {
 		}
 	}()
 
-	outputFile, err := os.Create(client.config.OutputFile)
-	if err != nil {
-		return fmt.Errorf("error creating file %q: %w", client.config.OutputFile, err)
-	}
-	defer func() {
-		if err := outputFile.Close(); err != nil {
-			logger.Error("close-output", logger.Fail, "err", err)
-		}
-	}()
-	writer := bufio.NewWriter(outputFile)
-	defer func() {
-		if err := writer.Flush(); err != nil {
-			logger.Error("flush-output", logger.Fail, "err", err)
-		}
-	}()
-
 	scanner := bufio.NewScanner(inputFile)
-	var batch []protocol.Bet
+	var batch []protocol2.Bet
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
@@ -141,22 +144,44 @@ func (client *Client) Run() error {
 			return err
 		}
 	}
+	return nil
+}
 
-	if err := safe_socket.SendAll(client.conn, protocol.MakePacketNoMoreBets()); err != nil {
-		return fmt.Errorf("error sending no-more-bets over socket %w", err)
+func (client *Client) fetchWinners() ([]protocol2.Bet, error) {
+	if err := safe_socket.SendAll(client.conn, protocol2.MakePacketNoMoreBets()); err != nil {
+		return nil, fmt.Errorf("error sending no-more-bets over socket %w", err)
 	}
 
-	packet, err := protocol.ReadMessage(client.conn)
+	packet, err := protocol2.ReadMessage(client.conn)
 	if err != nil {
-		return fmt.Errorf("error receiving winners from socket %w", err)
+		return nil, fmt.Errorf("error receiving winners from socket %w", err)
 	}
 	if !packet.IsBets() {
-		return fmt.Errorf("expected a winners packet, received a different type")
+		return nil, fmt.Errorf("expected a winners packet, received a different type")
 	}
-	winners, err := protocol.BetsFromBytes(packet.Payload())
+	winners, err := protocol2.BetsFromBytes(packet.Payload())
 	if err != nil {
-		return fmt.Errorf("error deserializing winners %w", err)
+		return nil, fmt.Errorf("error deserializing winners %w", err)
 	}
+	return winners, nil
+}
+
+func (client *Client) storeWinners(winners []protocol2.Bet) error {
+	outputFile, err := os.Create(client.config.OutputFile)
+	if err != nil {
+		return fmt.Errorf("error creating file %q: %w", client.config.OutputFile, err)
+	}
+	defer func() {
+		if err := outputFile.Close(); err != nil {
+			logger.Error("close-output", logger.Fail, "err", err)
+		}
+	}()
+	writer := bufio.NewWriter(outputFile)
+	defer func() {
+		if err := writer.Flush(); err != nil {
+			logger.Error("flush-output", logger.Fail, "err", err)
+		}
+	}()
 
 	for _, w := range winners {
 		betLine := fmt.Sprintf("%s,%s,%d,%s,%d\n",
@@ -166,33 +191,31 @@ func (client *Client) Run() error {
 		}
 	}
 
-	if err := safe_socket.SendAll(client.conn, protocol.MakePacketAck()); err != nil {
+	if err := safe_socket.SendAll(client.conn, protocol2.MakePacketAck()); err != nil {
 		return fmt.Errorf("error sending winners ack over socket %w", err)
 	}
-
-	logger.Info(mainAction, logger.Success, "agency-id", client.config.AgencyId, "winners", len(winners))
 
 	return nil
 }
 
-func parseLine(line, agencyId string) (protocol.Bet, error) {
+func parseLine(line, agencyId string) (protocol2.Bet, error) {
 	fields := strings.Split(line, ",")
 	if len(fields) != ExpectedFields {
-		return protocol.Bet{}, fmt.Errorf("expected %d fields, got %d", ExpectedFields, len(fields))
+		return protocol2.Bet{}, fmt.Errorf("expected %d fields, got %d", ExpectedFields, len(fields))
 	}
 	document, err := strconv.ParseUint(fields[FieldDocument], Base10, 32)
 	if err != nil {
-		return protocol.Bet{}, err
+		return protocol2.Bet{}, err
 	}
 	number, err := strconv.ParseUint(fields[FieldNumber], Base10, 32)
 	if err != nil {
-		return protocol.Bet{}, err
+		return protocol2.Bet{}, err
 	}
 	agency, err := strconv.ParseUint(agencyId, Base10, 32)
 	if err != nil {
-		return protocol.Bet{}, err
+		return protocol2.Bet{}, err
 	}
-	return protocol.Bet{
+	return protocol2.Bet{
 		AgencyId:  uint32(agency),
 		FirstName: fields[FieldFirstName],
 		LastName:  fields[FieldLastName],
@@ -202,11 +225,11 @@ func parseLine(line, agencyId string) (protocol.Bet, error) {
 	}, nil
 }
 
-func (client *Client) sendBets(bets []protocol.Bet) error {
-	if err := safe_socket.SendAll(client.conn, protocol.MakePacketBets(bets)); err != nil {
+func (client *Client) sendBets(bets []protocol2.Bet) error {
+	if err := safe_socket.SendAll(client.conn, protocol2.MakePacketBets(bets)); err != nil {
 		return fmt.Errorf("error sending bets over socket %w", err)
 	}
-	packet, err := protocol.ReadMessage(client.conn)
+	packet, err := protocol2.ReadMessage(client.conn)
 	if err != nil {
 		return fmt.Errorf("error receiving ack from socket %w", err)
 	}

@@ -2,11 +2,11 @@ import fcntl
 import signal
 import socket
 
+from protocol import protocol
 from lottery.lottery import Lottery
 
 import logger
 import safe_socket
-from lottery import protocol
 from quorum import DIE_TOKEN
 
 

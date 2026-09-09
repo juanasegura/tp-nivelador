@@ -14,8 +14,8 @@ import (
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/safe_socket"
 )
 
-const CONNECTION_ATTEMPTS_MAX = 3
-const CONNECTION_ATTEMPS_DELAY_MS = 200
+const ConnectionAttemptsMax = 3
+const ConnectionAttemptsDelayMs = 200
 
 const (
 	// Campos del CSV de entrada (first_name,last_name,document,birthdate,number)
@@ -30,7 +30,7 @@ const (
 	Base10 = 10
 )
 
-type ClientConfig struct {
+type Config struct {
 	ServerHost string
 	ServerPort string
 	AgencyId   string
@@ -41,10 +41,10 @@ type ClientConfig struct {
 
 type Client struct {
 	conn   net.Conn
-	config ClientConfig
+	config Config
 }
 
-func NewClient(config ClientConfig) (*Client, error) {
+func NewClient(config Config) (*Client, error) {
 	conn, err := connectToServer(config.ServerHost, config.ServerPort)
 	if err != nil {
 		logger.Warn("connect-to-server", logger.Fail)
@@ -61,11 +61,11 @@ func connectToServer(host, port string) (net.Conn, error) {
 	var conn net.Conn
 
 	logger.Info(action, logger.InProgress)
-	for i := range CONNECTION_ATTEMPTS_MAX {
+	for i := range ConnectionAttemptsMax {
 		conn, err = net.Dial("tcp", host+":"+port)
 		if err != nil {
 			logger.Warn(action, logger.Fail, "attempt", i)
-			time.Sleep(CONNECTION_ATTEMPS_DELAY_MS * time.Millisecond)
+			time.Sleep(ConnectionAttemptsDelayMs * time.Millisecond)
 			continue
 		}
 
@@ -90,7 +90,7 @@ func (client *Client) Run() error {
 
 	inputFile, err := os.Open(client.config.InputFile)
 	if err != nil {
-		return fmt.Errorf("error al abrir el archivo %q: %w", client.config.InputFile, err)
+		return fmt.Errorf("error opening file %q: %w", client.config.InputFile, err)
 	}
 	defer func() {
 		if err := inputFile.Close(); err != nil {
@@ -100,7 +100,7 @@ func (client *Client) Run() error {
 
 	outputFile, err := os.Create(client.config.OutputFile)
 	if err != nil {
-		return fmt.Errorf("error al crear archivo %q: %w", client.config.OutputFile, err)
+		return fmt.Errorf("error creating file %q: %w", client.config.OutputFile, err)
 	}
 	defer func() {
 		if err := outputFile.Close(); err != nil {
@@ -123,7 +123,7 @@ func (client *Client) Run() error {
 		}
 		bet, err := parseLine(line, client.config.AgencyId)
 		if err != nil {
-			return fmt.Errorf("error al parsear línea %q: %w", line, err)
+			return fmt.Errorf("error parsing line %q: %w", line, err)
 		}
 		batch = append(batch, bet)
 		if len(batch) >= client.config.BatchSize {
@@ -134,7 +134,7 @@ func (client *Client) Run() error {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("error al leer archivo %w", err)
+		return fmt.Errorf("error reading file %w", err)
 	}
 	if len(batch) > 0 {
 		if err := client.sendBets(batch); err != nil {
@@ -143,31 +143,31 @@ func (client *Client) Run() error {
 	}
 
 	if err := safe_socket.SendAll(client.conn, protocol.MakePacketNoMoreBets()); err != nil {
-		return fmt.Errorf("error al enviar no-more-bets por socket %w", err)
+		return fmt.Errorf("error sending no-more-bets over socket %w", err)
 	}
 
 	packet, err := protocol.ReadMessage(client.conn)
 	if err != nil {
-		return fmt.Errorf("error al recibir winners por socket %w", err)
+		return fmt.Errorf("error receiving winners from socket %w", err)
 	}
 	if !packet.IsBets() {
-		return fmt.Errorf("se esperaba un paquete de winners, se recibió otro tipo")
+		return fmt.Errorf("expected a winners packet, received a different type")
 	}
 	winners, err := protocol.BetsFromBytes(packet.Payload())
 	if err != nil {
-		return fmt.Errorf("error al deserializar winners %w", err)
+		return fmt.Errorf("error deserializing winners %w", err)
 	}
 
 	for _, w := range winners {
 		betLine := fmt.Sprintf("%s,%s,%d,%s,%d\n",
 			w.FirstName, w.LastName, w.Document, w.Birthdate, w.Number)
 		if _, err := writer.WriteString(betLine); err != nil {
-			return fmt.Errorf("error al escribir en archivo: %w", err)
+			return fmt.Errorf("error writing to file: %w", err)
 		}
 	}
 
 	if err := safe_socket.SendAll(client.conn, protocol.MakePacketAck()); err != nil {
-		return fmt.Errorf("error al enviar ack de winners por socket %w", err)
+		return fmt.Errorf("error sending winners ack over socket %w", err)
 	}
 
 	logger.Info(mainAction, logger.Success, "agency-id", client.config.AgencyId, "winners", len(winners))
@@ -178,7 +178,7 @@ func (client *Client) Run() error {
 func parseLine(line, agencyId string) (protocol.Bet, error) {
 	fields := strings.Split(line, ",")
 	if len(fields) != ExpectedFields {
-		return protocol.Bet{}, fmt.Errorf("se esperaban %d campos, hay %d", ExpectedFields, len(fields))
+		return protocol.Bet{}, fmt.Errorf("expected %d fields, got %d", ExpectedFields, len(fields))
 	}
 	document, err := strconv.ParseUint(fields[FieldDocument], Base10, 32)
 	if err != nil {
@@ -204,14 +204,14 @@ func parseLine(line, agencyId string) (protocol.Bet, error) {
 
 func (client *Client) sendBets(bets []protocol.Bet) error {
 	if err := safe_socket.SendAll(client.conn, protocol.MakePacketBets(bets)); err != nil {
-		return fmt.Errorf("error al enviar bets por socket %w", err)
+		return fmt.Errorf("error sending bets over socket %w", err)
 	}
 	packet, err := protocol.ReadMessage(client.conn)
 	if err != nil {
-		return fmt.Errorf("error al recibir ack por socket %w", err)
+		return fmt.Errorf("error receiving ack from socket %w", err)
 	}
 	if !packet.IsAck() {
-		return fmt.Errorf("se esperaba un ack, se recibió otro tipo")
+		return fmt.Errorf("expected an ack, received a different type")
 	}
 	return nil
 }

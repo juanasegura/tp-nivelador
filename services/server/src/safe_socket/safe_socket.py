@@ -6,7 +6,7 @@ def recv_all(sock: socket.socket, size: int) -> bytes:
     while len(buf) < size:
         chunk = sock.recv(size - len(buf))
         if not chunk:
-            raise ValueError("conexion cerrada")
+            raise ValueError("connection closed")
         buf += chunk
     return bytes(buf)
 

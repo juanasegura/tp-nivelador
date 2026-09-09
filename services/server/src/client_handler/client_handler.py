@@ -1,20 +1,22 @@
 import fcntl
 import signal
 import socket
+
+from lottery.lottery import Lottery
+
 import logger
 import safe_socket
 from lottery import protocol
-from lottery.lottery import Lottery
 from quorum import DIE_TOKEN
+
 
 def handle_client(
     client_socket: socket.socket,
-    storage_path: str,
+    lottery: Lottery,
     requests_q,
     ready_q,
 ):
     action = "handle-client"
-    lottery = Lottery(storage_path)
     client_agency = None
 
     # defino como closure el manejo de la señal de fin
@@ -22,6 +24,8 @@ def handle_client(
         client_socket.close()
         requests_q.close()
         ready_q.close()
+        requests_q.join_thread()
+        ready_q.join_thread()
 
     signal.signal(signal.SIGTERM, _terminate_handler)
 
@@ -32,50 +36,51 @@ def handle_client(
             if packet.is_bets():
                 bets = protocol.bets_from_bytes(packet.payload())
                 client_agency = bets[0].agency_id
-                _store_bets_with_lock(storage_path, bets)
+                _store_bets_with_lock(lottery, bets)
                 safe_socket.send_all(client_socket, protocol.make_packet_ack())
             elif packet.is_no_more_bets():
                 requests_q.put(client_agency)
                 token = ready_q.get()
                 if token == DIE_TOKEN:
                     break
-                winners = _load_bets_with_lock(storage_path, lottery, client_agency)
+                winners = _load_bets_with_lock(lottery, client_agency)
                 safe_socket.send_all(
                     client_socket,
                     protocol.make_packet_bets(winners, client_agency),
                 )
                 ack = protocol.read_message(client_socket)
                 if not ack.is_ack():
-                    raise ValueError("se esperaba un ack del cliente")
+                    raise ValueError("expected an ack from the client")
                 break
-    except Exception as e:
+    except Exception:
         logger.error(action, logger.LogResult.fail)
-        raise e
+        raise
     finally:
         client_socket.close()
         requests_q.close()
         ready_q.close()
+        requests_q.join_thread()
+        ready_q.join_thread()
 
 
-def _store_bets_with_lock(storage_path: str, bets) -> None:
-    storage_file = open(storage_path, "a+")
-    try:
+def _store_bets_with_lock(lottery: Lottery, bets) -> None:
+    with open(lottery.storage_path, "a+") as storage_file:
         fcntl.flock(storage_file.fileno(), fcntl.LOCK_EX)
-        Lottery(storage_path).store_bets(bets)
-    finally:
-        fcntl.flock(storage_file.fileno(), fcntl.LOCK_UN)
-        storage_file.close()
+        try:
+            lottery.store_bets(bets)
+        finally:
+            fcntl.flock(storage_file.fileno(), fcntl.LOCK_UN)
 
 
-def _load_bets_with_lock(storage_path: str, lottery: Lottery, client_agency: int):
-    storage_file = open(storage_path, "a+")
-    try:
+def _load_bets_with_lock(lottery: Lottery, client_agency: int):
+    with open(lottery.storage_path, "a+") as storage_file:
         fcntl.flock(storage_file.fileno(), fcntl.LOCK_SH)
-        return [
-            b
-            for b in lottery.load_bets()
-            if lottery.has_won(b) and b.agency_id == client_agency
-        ]
-    finally:
-        fcntl.flock(storage_file.fileno(), fcntl.LOCK_UN)
-        storage_file.close()
+        try:
+            return [
+                b
+                for b in lottery.load_bets()
+                if lottery.has_won(b) and b.agency_id == client_agency
+            ]
+        finally:
+            fcntl.flock(storage_file.fileno(), fcntl.LOCK_UN)
+    return None

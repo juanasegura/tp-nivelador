@@ -2,6 +2,7 @@ import multiprocessing
 
 DIE_TOKEN = -1
 
+
 def quorum_process(
     requests_q: multiprocessing.Queue,
     ready_q: multiprocessing.Queue,
@@ -13,6 +14,8 @@ def quorum_process(
         if client_agency == DIE_TOKEN:
             requests_q.close()
             ready_q.close()
+            requests_q.join_thread()
+            ready_q.join_thread()
             break
 
         agencies.add(client_agency)

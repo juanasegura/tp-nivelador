@@ -1,1 +1,2 @@
-from .quorum import DIE_TOKEN, quorum_process
+from .quorum import DIE_TOKEN as DIE_TOKEN
+from .quorum import quorum_process as quorum_process

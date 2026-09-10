@@ -39,6 +39,7 @@ def handle_client(
                 _store_bets_with_lock(lottery, bets)
                 safe_socket.send_all(client_socket, protocol.make_packet_ack())
             elif packet.is_no_more_bets():
+                safe_socket.send_all(client_socket, protocol.make_packet_ack())
                 requests_q.put(client_agency)
                 token = ready_q.get()
                 if token == DIE_TOKEN:

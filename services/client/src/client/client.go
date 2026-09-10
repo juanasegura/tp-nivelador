@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/logger"
-	protocol2 "github.com/7574-sistemas-distribuidos/tp-nivelador/src/protocol"
+	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/protocol"
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/safe_socket"
 )
 
@@ -118,7 +118,7 @@ func (client *Client) loadAndSendBets() error {
 	}()
 
 	scanner := bufio.NewScanner(inputFile)
-	var batch []protocol2.Bet
+	var batch []protocol.Bet
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
@@ -147,26 +147,34 @@ func (client *Client) loadAndSendBets() error {
 	return nil
 }
 
-func (client *Client) fetchWinners() ([]protocol2.Bet, error) {
-	if err := safe_socket.SendAll(client.conn, protocol2.MakePacketNoMoreBets()); err != nil {
+func (client *Client) fetchWinners() ([]protocol.Bet, error) {
+	if err := safe_socket.SendAll(client.conn, protocol.MakePacketNoMoreBets()); err != nil {
 		return nil, fmt.Errorf("error sending no-more-bets over socket %w", err)
 	}
 
-	packet, err := protocol2.ReadMessage(client.conn)
+	ack, err := protocol.ReadMessage(client.conn)
+	if err != nil {
+		return nil, fmt.Errorf("error receiving end-of-bets ack from socket %w", err)
+	}
+	if !ack.IsAck() {
+		return nil, fmt.Errorf("expected an ack after no-more-bets, received a different type")
+	}
+
+	packet, err := protocol.ReadMessage(client.conn)
 	if err != nil {
 		return nil, fmt.Errorf("error receiving winners from socket %w", err)
 	}
 	if !packet.IsBets() {
 		return nil, fmt.Errorf("expected a winners packet, received a different type")
 	}
-	winners, err := protocol2.BetsFromBytes(packet.Payload())
+	winners, err := protocol.BetsFromBytes(packet.Payload())
 	if err != nil {
 		return nil, fmt.Errorf("error deserializing winners %w", err)
 	}
 	return winners, nil
 }
 
-func (client *Client) storeWinners(winners []protocol2.Bet) error {
+func (client *Client) storeWinners(winners []protocol.Bet) error {
 	outputFile, err := os.Create(client.config.OutputFile)
 	if err != nil {
 		return fmt.Errorf("error creating file %q: %w", client.config.OutputFile, err)
@@ -191,31 +199,31 @@ func (client *Client) storeWinners(winners []protocol2.Bet) error {
 		}
 	}
 
-	if err := safe_socket.SendAll(client.conn, protocol2.MakePacketAck()); err != nil {
+	if err := safe_socket.SendAll(client.conn, protocol.MakePacketAck()); err != nil {
 		return fmt.Errorf("error sending winners ack over socket %w", err)
 	}
 
 	return nil
 }
 
-func parseLine(line, agencyId string) (protocol2.Bet, error) {
+func parseLine(line, agencyId string) (protocol.Bet, error) {
 	fields := strings.Split(line, ",")
 	if len(fields) != ExpectedFields {
-		return protocol2.Bet{}, fmt.Errorf("expected %d fields, got %d", ExpectedFields, len(fields))
+		return protocol.Bet{}, fmt.Errorf("expected %d fields, got %d", ExpectedFields, len(fields))
 	}
 	document, err := strconv.ParseUint(fields[FieldDocument], Base10, 32)
 	if err != nil {
-		return protocol2.Bet{}, err
+		return protocol.Bet{}, err
 	}
 	number, err := strconv.ParseUint(fields[FieldNumber], Base10, 32)
 	if err != nil {
-		return protocol2.Bet{}, err
+		return protocol.Bet{}, err
 	}
 	agency, err := strconv.ParseUint(agencyId, Base10, 32)
 	if err != nil {
-		return protocol2.Bet{}, err
+		return protocol.Bet{}, err
 	}
-	return protocol2.Bet{
+	return protocol.Bet{
 		AgencyId:  uint32(agency),
 		FirstName: fields[FieldFirstName],
 		LastName:  fields[FieldLastName],
@@ -225,11 +233,11 @@ func parseLine(line, agencyId string) (protocol2.Bet, error) {
 	}, nil
 }
 
-func (client *Client) sendBets(bets []protocol2.Bet) error {
-	if err := safe_socket.SendAll(client.conn, protocol2.MakePacketBets(bets)); err != nil {
+func (client *Client) sendBets(bets []protocol.Bet) error {
+	if err := safe_socket.SendAll(client.conn, protocol.MakePacketBets(bets)); err != nil {
 		return fmt.Errorf("error sending bets over socket %w", err)
 	}
-	packet, err := protocol2.ReadMessage(client.conn)
+	packet, err := protocol.ReadMessage(client.conn)
 	if err != nil {
 		return fmt.Errorf("error receiving ack from socket %w", err)
 	}

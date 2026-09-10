@@ -35,10 +35,10 @@ def bets_to_bytes(bets: list[Bet], agency_id: int) -> bytes:
     buf = len(bets).to_bytes(UINT32_SIZE, "big")
     buf += agency_id.to_bytes(UINT32_SIZE, "big")
     for bet in bets:
-        buf += bet_to_bytes(bet)
+        buf += _bet_to_bytes(bet)
     return buf
 
-def bet_to_bytes(bet: Bet) -> bytes:
+def _bet_to_bytes(bet: Bet) -> bytes:
     buf = b""
 
     first = bet.first_name.encode("utf-8")
@@ -61,12 +61,12 @@ def bets_from_bytes(data: bytes) -> list[Bet]:
     bets = []
     pos = UINT32_SIZE * 2
     for _ in range(count):
-        bet, pos = bet_from_bytes(data, pos, agency_id)
+        bet, pos = _bet_from_bytes(data, pos, agency_id)
         bets.append(bet)
     return bets
 
 
-def bet_from_bytes(data: bytes, pos: int, agency_id: int) -> tuple[Bet, int]:
+def _bet_from_bytes(data: bytes, pos: int, agency_id: int) -> tuple[Bet, int]:
     first_len = int(data[pos])
     pos += UINT8_SIZE
     first_name = data[pos : pos + first_len].decode("utf-8")

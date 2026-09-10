@@ -25,12 +25,12 @@ func BetsToBytes(bets []Bet, agencyId uint32) []byte {
 	buf = binary.BigEndian.AppendUint32(buf, uint32(len(bets)))
 	buf = binary.BigEndian.AppendUint32(buf, agencyId)
 	for _, bet := range bets {
-		buf = append(buf, BetToBytes(bet)...)
+		buf = append(buf, betToBytes(bet)...)
 	}
 	return buf
 }
 
-func BetToBytes(bet Bet) []byte {
+func betToBytes(bet Bet) []byte {
 	buf := make([]byte, 0, 60)
 
 	buf = append(buf, byte(len(bet.FirstName)))
@@ -57,7 +57,7 @@ func BetsFromBytes(payload []byte) ([]Bet, error) {
 	pos := Uint32Size * 2
 	bets := make([]Bet, 0, count)
 	for range count {
-		bet, newPos, err := BetFromBytes(payload, pos, agencyId)
+		bet, newPos, err := betFromBytes(payload, pos, agencyId)
 		if err != nil {
 			return nil, err
 		}
@@ -67,7 +67,7 @@ func BetsFromBytes(payload []byte) ([]Bet, error) {
 	return bets, nil
 }
 
-func BetFromBytes(b []byte, pos int, agencyId uint32) (Bet, int, error) {
+func betFromBytes(b []byte, pos int, agencyId uint32) (Bet, int, error) {
 	firstName, pos, err := readString(b, pos)
 	if err != nil {
 		return Bet{}, 0, err
